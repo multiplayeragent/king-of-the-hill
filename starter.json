@@ -1,0 +1,21 @@
+{
+  "name": "King of the Hill",
+  "genre": "party",
+  "dim": "3D",
+  "mode": "Party",
+  "players": "2–8",
+  "hook": "Hold the snowy hilltop alone. Shove everyone off.",
+  "how": "Every second you stand alone on the icy top of the hill scores a point; two or more up there and nobody scores. Shove the others down the slope, and the highest score when the clock runs out wins.",
+  "controls": "WASD or arrow keys to move and Space to shove, or the touch stick and Shove button",
+  "uses": [
+    ["Host-run rules", "The host's browser decides every shove and counts every point; if it leaves, the next player takes over."],
+    ["Bots", "Bots fill the hill until enough people join, climbing and shoving like players."],
+    ["Live sync", "Everyone sees the same shoves, tumbles and scores as they happen."],
+    ["Leaderboard", "The best scores anyone has made in one game, on the results card."]
+  ],
+  "ideas": [
+    "Make it a sandcastle on a beach",
+    "Add a power-up snowball that knocks people further",
+    "Make the hilltop move around the map every 20 seconds"
+  ]
+}

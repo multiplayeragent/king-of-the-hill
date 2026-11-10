@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>King of the Hill</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; background: #bfe3ff; }
+  body { font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: #fff; user-select: none; -webkit-user-select: none; }
+  canvas { display: block; touch-action: none; }
+  .hud { position: fixed; pointer-events: none; text-shadow: 0 2px 4px #0009, 0 0 2px #0006; font-weight: 800; }
+  #top { top: max(10px, env(safe-area-inset-top)); left: 0; right: 0; text-align: center; font-size: 20px; padding: 0 12px; }
+  #top small { display: block; font-size: 14px; font-weight: 700; opacity: .95; }
+  #top.king { color: #ffd23f; }
+  #big { inset: 0; display: grid; place-items: center; text-align: center; font-size: min(14vw, 96px); line-height: 1.05; color: #ffd23f; -webkit-text-stroke: 3px #1d3b6b; padding: 0 12px; }
+  #big small { display: block; font-size: min(5vw, 24px); color: #fff; -webkit-text-stroke: 0; margin-bottom: 8px; }
+  #msg { top: calc(max(10px, env(safe-area-inset-top)) + 58px); left: 16px; right: 16px; text-align: center; font-size: 16px; }
+  #pop { top: 34%; left: 0; right: 0; text-align: center; font-size: 34px; color: #ffd23f; opacity: 0; transition: opacity .5s, transform .5s; }
+  #pop.on { opacity: 1; transform: translateY(-14px); transition: none; }
+  #ranks { left: max(12px, env(safe-area-inset-left)); top: calc(max(10px, env(safe-area-inset-top)) + 92px); font-size: 13px; font-weight: 700; min-width: 130px; }
+  #ranks div { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+  #ranks div.me { color: #ffd23f; }
+  #ranks i { width: 11px; height: 11px; border-radius: 50%; border: 2px solid #fff8; }
+  #ranks b { margin-left: auto; padding-left: 10px; font-variant-numeric: tabular-nums; }
+  @media (max-width: 640px) { #ranks { top: auto; bottom: calc(max(10px, env(safe-area-inset-bottom)) + 26px); font-size: 12px; } }
+  #net { bottom: max(10px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); font-size: 12px; font-weight: 600; opacity: .9; white-space: nowrap; }
+  #over { position: fixed; inset: 0; display: grid; place-items: center; background: #0d2a4a66; }
+  #over[hidden], #stick[hidden], #shove[hidden] { display: none; }
+  .card { width: min(380px, 90vw); max-height: 84vh; overflow: auto; padding: 20px; border-radius: 18px; background: #1d3b6b; border: 2px solid #ffffff33; box-sizing: border-box; }
+  .card h2 { margin: 0 0 8px; font-size: 22px; color: #ffd23f; }
+  .card h3 { margin: 14px 0 4px; font-size: 14px; color: #9fd8ff; }
+  .card ol { margin: 0; padding-left: 24px; font-size: 14px; }
+  .card li span { float: right; font-variant-numeric: tabular-nums; }
+  .card li.me { color: #ffd23f; font-weight: 700; }
+  .card p { margin: 10px 0; font-size: 13px; opacity: .85; }
+  button.go { width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #ffd23f; color: #1d3b6b; font: 800 17px system-ui, sans-serif; cursor: pointer; }
+  #stick { position: fixed; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; background: #ffffff22; border: 2px solid #ffffff77; pointer-events: none; }
+  #stick i { position: absolute; left: 35px; top: 35px; width: 50px; height: 50px; border-radius: 50%; background: #ffffffaa; }
+  #shove { position: fixed; right: max(18px, env(safe-area-inset-right)); bottom: max(26px, env(safe-area-inset-bottom)); width: 92px; height: 92px; border-radius: 50%;
+           border: 3px solid #ffffffaa; background: #3d7bd999; color: #fff; font: 800 15px system-ui, sans-serif; touch-action: none; }
+  #shove.on { background: #ffd23fcc; color: #1d3b6b; }
+  #shove.wait { opacity: .45; }
+</style>
+<script src="https://cdn.multiplayeragent.com/sdk/mp.global.js"></script>
+<script type="importmap">{ "imports": { "three": "./libs/three.module.min.js" } }</script>
+</head>
+<body>
+<div class="hud" id="top"></div>
+<div class="hud" id="msg"></div>
+<div class="hud" id="ranks"></div>
+<div class="hud" id="pop"></div>
+<div class="hud" id="big"></div>
+<div class="hud" id="net">Connecting…</div>
+<div id="stick" hidden><i></i></div>
+<button id="shove" hidden>SHOVE</button>
+<div id="over" hidden><div class="card">
+  <h2 id="title">Time's up</h2><ol id="results"></ol>
+  <h3>Best scores</h3><ol id="board"><li>Loading…</li></ol>
+  <p id="next"></p>
+  <button class="go" id="again">Play again</button>
+</div></div>
+<script type="module">
+/* ═══ KING OF THE HILL · a Multiplayer Agent starter ══════════════════════════════════
+ * Hold the snowy hilltop alone. Shove everyone off. Party, 2–8; bots fill the hill.
+ * Every second you stand ALONE on the icy top scores a point. Most points when time runs out wins.
+ *
+ * WHERE THINGS ARE (search for the "── " headers):
+ *   CONFIG ........ game length, movement, the shove, the hill's size
+ *   CONNECTION .... MP_CONNECT, joining, the offline room, who is host
+ *   SCENE ......... renderer, sky, snowfall, particles, sounds
+ *   HILL .......... the hill's shape (groundY), the icy top, the floating crown, trees, rocks
+ *   SNOW BUDDIES .. the player model: hat, scarf, pushing arms, name tags, the king's crown
+ *   PHYSICS ....... walking, sliding down the slope, getting shoved (same code for you and bots)
+ *   GAME (HOST) ... the clock, who is king, points, every shove, the bots. Only the host writes these.
+ *   ME ............ your snow buddy. Each player writes only its own.
+ *   HUD & RESULTS . timer, who's king, scores, results card, leaderboard
+ *   INPUT ......... keyboard, touch stick and Shove button
+ *
+ * HOW THE MULTIPLAYER WORKS (a relay room: no server code):
+ *   - Each player writes its OWN entity: `p` (one packed JSON field: game id, position,
+ *     velocity, heading, animation) about 15 times a second, `hb` (heartbeat) once a
+ *     second, and `n`/`c` (name, color) once.
+ *   - The HOST is the lowest sessionId among live players (heartbeat seen in the last 3s),
+ *     worked out every frame. Only the host writes the shared fields `game` (id, v, phase,
+ *     clock, scores, who is king right now, the winner) and `bots`. A new host adopts both
+ *     and carries on with the same clock and scores.
+ *   - Shoves are HOST-RUN: a player who shoves sends "shove" {x, y, z, h}; the host finds
+ *     who is in front of it (its own view: the bots, itself, everyone else at their latest
+ *     position) and sends "knock" {to, vx, vy, vz} for each. The player named sets its own
+ *     speed; everyone shows the hit. The host's own shoves skip the message.
+ *   - Points are HOST-RUN too: each second the host checks who is on the top. Exactly one =
+ *     that player scores; more than one = contested, nobody scores.
+ *   - "again" asks the host to start the next game sooner.
+ *   - ?attract plays offline with bots only (the preview video is recorded from it).
+ *   - Leaderboard "king-points": each player's best score in one game, on the results card.
+ */
+import * as THREE from "three";
+
+// ── CONFIG ──────────────────────────────────────────────────────────────────────────
+const CONFIG = {
+  seats: 6,              // bots fill the hill up to this many players
+  gameMs: 90000,         // how long a game lasts
+  startMs: 3500,         // countdown before points count
+  resultsMs: 11000,      // results card before the next game
+  // moving
+  speed: 6.5,            // walking speed, units/s
+  accel: 14,             // how quickly you reach full speed
+  slide: 9,              // how hard the slope pulls you down (more while you're reeling)
+  gravity: 24,
+  // the shove
+  shoveReach: 2.1,       // how far in front a shove reaches
+  shoveCone: 0.45,       // how wide (cosine of the half-angle: 0.45 ≈ 63°)
+  shovePower: 12,        // how hard a shove sends you flying
+  shoveUp: 4.5,          // ...and how high
+  shoveLunge: 5,         // the shover steps forward this fast
+  shoveCooldown: 0.8,    // seconds between shoves
+  stunTime: 0.55,        // after a shove you can barely steer for this long
+  // the hill
+  topR: 3.4,             // the icy top's radius (stand here to score)
+  baseR: 10.5,           // where the slope meets the snowfield
+  hillH: 3.4,            // how tall the hill is
+  fieldR: 19,            // the rocks around the snowfield
+  bodyR: 0.6,
+  board: "king-points",
+};
+const BOT_NAMES = ["Frosty", "Mitten", "Pebble", "Sleet", "Biscuit", "Nugget", "Flurry", "Cocoa", "Tundra", "Maple", "Juniper", "Pip", "Gus", "Waffles"];
+const COLORS = ["#ff4d6d", "#4dabff", "#ffd23f", "#52d273", "#b47dff", "#ff8c42", "#ff6fb5", "#3de0d0", "#a3e635", "#f97316", "#e879f9", "#22d3ee"];
+
+// ── CONNECTION ──────────────────────────────────────────────────────────────────────
+// The builder fills these in for this game. Downloaded from GitHub? Put your own pk_ key here.
+const MP_CONNECT = {
+  key: 'pk_REPLACE_ME',
+  room: 'king-of-the-hill',
+  endpoint: 'wss://live.multiplayeragent.com',
+  apiUrl: 'https://api.multiplayeragent.com',
+};
+const ATTRACT = new URLSearchParams(location.search).has("attract");
+
+/** Same shape as the SDK client, kept in this tab: offline play and ?attract. */
+function localRoom() {
+  const id = "local", state = { entities: { players: { [id]: {} } }, shared: {} }, subs = [];
+  let queued = false;
+  const emit = () => { if (!queued) { queued = true; queueMicrotask(() => { queued = false; subs.forEach((f) => f(state)); }); } };
+  const put = (o, k, v) => { if (typeof k === "object") Object.assign(o, k); else o[k] = v; emit(); };
+  return {
+    sessionId: id, state, offline: true,
+    me: { set: (k, v) => put(state.entities.players[id], k, v) },
+    setShared: (k, v) => put(state.shared, k, v),
+    onState: (f) => { subs.push(f); f(state); }, onJoin() {}, onLeave() {}, on() {}, send() {},
+    onDisconnect() {}, onReconnect() {}, leave: async () => {},
+  };
+}
+async function connect() {
+  if (ATTRACT || typeof MP === "undefined") return localRoom();
+  try {
+    const mp = await Promise.race([MP.join({ ...MP_CONNECT }), new Promise((_, no) => setTimeout(() => no(new Error("timed out")), 10000))]);
+    window.mp = mp; // the builder calls window.mp.leave() when the page closes
+    return mp;
+  } catch (e) {
+    console.warn("Playing offline:", e && e.message);
+    return localRoom();
+  }
+}
+const parse = (v, fb) => { if (typeof v !== "string") return fb; try { return JSON.parse(v); } catch { return fb; } };
+const memo = new Map();
+/** A shared JSON field, parsed once per change (read-only: never mutate what this returns). */
+function shared(key, fallback) {
+  const raw = S.shared[key], m = memo.get(key);
+  if (m && m.raw === raw) return m.v;
+  const v = parse(raw, fallback); memo.set(key, { raw, v }); return v;
+}
+let net = null, S = { entities: { players: {} }, shared: {} }, dropped = false;
+const seenHb = new Map();
+function livePlayers() {
+  const now = performance.now(), out = [];
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    const s = seenHb.get(id);
+    if (!s || s.hb !== p.hb) seenHb.set(id, { hb: p.hb, at: now });
+    if (id === net.sessionId || now - seenHb.get(id).at < 3000) out.push(id);
+  }
+  return out.sort();
+}
+const isHost = () => livePlayers()[0] === net.sessionId;
+const isBot = (id) => id[0] === "@"; // bot ids look like "@3"; sessionIds never have an @
+
+// ── SCENE ───────────────────────────────────────────────────────────────────────────
+const renderer = new THREE.WebGLRenderer({ antialias: !ATTRACT }); // the preview recorder renders in software: keep it cheap
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+document.body.prepend(renderer.domElement);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(46, 1, 0.5, 400);
+function fit() { renderer.setSize(innerWidth, innerHeight); camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); }
+addEventListener("resize", fit); addEventListener("orientationchange", fit); fit();
+scene.add(new THREE.HemisphereLight("#eaf4ff", "#7f9cc4", 1.15));
+const sun = new THREE.DirectionalLight("#fff0d8", 2.2); sun.position.set(-30, 30, 12); scene.add(sun);
+function canvasTex(w, h, paint, repeat) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; paint(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+  if (repeat) t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+const mat = (color, extra) => new THREE.MeshStandardMaterial({ color, roughness: 0.75, ...extra });
+const mtx = new THREE.Matrix4(), q = new THREE.Quaternion(), e3 = new THREE.Euler(), v3 = new THREE.Vector3(), one = new THREE.Vector3();
+scene.background = canvasTex(4, 256, (c, w, h) => { const g = c.createLinearGradient(0, 0, 0, h); g.addColorStop(0, "#3f8fe0"); g.addColorStop(0.6, "#a9d6ff"); g.addColorStop(1, "#e8f5ff"); c.fillStyle = g; c.fillRect(0, 0, w, h); });
+scene.fog = new THREE.Fog("#dcefff", 45, 120);
+// snow drifting down, around wherever the camera looks
+const FLAKES = 260, flakePos = new Float32Array(FLAKES * 3);
+for (let i = 0; i < FLAKES; i++) { flakePos[i * 3] = (Math.random() - 0.5) * 50; flakePos[i * 3 + 1] = Math.random() * 20; flakePos[i * 3 + 2] = (Math.random() - 0.5) * 50; }
+const flakeGeo = new THREE.BufferGeometry(); flakeGeo.setAttribute("position", new THREE.BufferAttribute(flakePos, 3));
+const flakes = new THREE.Points(flakeGeo, new THREE.PointsMaterial({ color: "#ffffff", size: 0.18, transparent: true, opacity: 0.85, depthWrite: false }));
+flakes.frustumCulled = false; scene.add(flakes);
+// puffs, stars and confetti: a ring buffer of little squares
+const PARTS = 320, parts = Array.from({ length: PARTS }, () => ({ life: 0 }));
+const partMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(0.24, 0.24), new THREE.MeshBasicMaterial({ side: THREE.DoubleSide }), PARTS);
+partMesh.setColorAt(0, new THREE.Color("#fff")); partMesh.frustumCulled = false; scene.add(partMesh);
+let nextPart = 0;
+function burst(x, y, z, color, n = 14, speed = 6, up = 1) {
+  const c = new THREE.Color(color);
+  for (let i = 0; i < n; i++) {
+    const p = parts[nextPart]; partMesh.setColorAt(nextPart, c); nextPart = (nextPart + 1) % PARTS;
+    Object.assign(p, { x, y, z, vx: (Math.random() - 0.5) * speed, vy: Math.random() * speed * up, vz: (Math.random() - 0.5) * speed, life: 0.5 + Math.random() * 0.6, r: Math.random() * 6 });
+  }
+  partMesh.instanceColor.needsUpdate = true;
+}
+function drawScenery(dt, now) {
+  parts.forEach((p, i) => {
+    if (p.life > 0) { p.life -= dt; p.vy -= 12 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; p.r += dt * 6; }
+    const s = p.life > 0 ? Math.min(1, p.life * 2) : 0;
+    partMesh.setMatrixAt(i, mtx.compose(v3.set(p.x || 0, p.y || 0, p.z || 0), q.setFromEuler(e3.set(p.r || 0, (p.r || 0) * 0.7, 0)), one.set(s, s, s)));
+  });
+  partMesh.instanceMatrix.needsUpdate = true;
+  const cx = camLook.x, cz = camLook.z;
+  for (let i = 0; i < FLAKES; i++) {
+    let y = flakePos[i * 3 + 1] - dt * (1.2 + (i % 5) * 0.25); if (y < 0) y += 20;
+    flakePos[i * 3 + 1] = y; flakePos[i * 3] += Math.sin(now / 900 + i) * dt * 0.4;
+    if (flakePos[i * 3] - cx > 25) flakePos[i * 3] -= 50; else if (flakePos[i * 3] - cx < -25) flakePos[i * 3] += 50; // keep them near the view
+    if (flakePos[i * 3 + 2] - cz > 25) flakePos[i * 3 + 2] -= 50; else if (flakePos[i * 3 + 2] - cz < -25) flakePos[i * 3 + 2] += 50;
+  }
+  flakeGeo.attributes.position.needsUpdate = true;
+}
+// Sounds, made on the fly with WebAudio (no files).
+let audio = null, noise = null;
+function unlockAudio() {
+  if (audio || ATTRACT) return;
+  try {
+    audio = new AudioContext();
+    noise = audio.createBuffer(1, audio.sampleRate * 0.4, audio.sampleRate);
+    const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  } catch {}
+}
+function sfx(kind, power = 1) {
+  if (!audio) return;
+  const t = audio.currentTime, gain = audio.createGain();
+  if (kind === "whoosh") {
+    const src = audio.createBufferSource(), f = audio.createBiquadFilter(); src.buffer = noise; f.type = "bandpass"; f.frequency.setValueAtTime(600, t); f.frequency.exponentialRampToValueAtTime(2400, t + 0.15);
+    gain.gain.setValueAtTime(0.18 * power, t); gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    src.connect(f).connect(gain).connect(audio.destination); src.start(t); src.stop(t + 0.2); return;
+  }
+  const o = audio.createOscillator();
+  const [type, f0, f1, len, vol] = { thump: ["sine", 220, 60, 0.18, 0.4 * power], point: ["sine", 880, 1320, 0.12, 0.12], beep: ["square", 520, 520, 0.12, 0.08], go: ["square", 780, 780, 0.3, 0.1], win: ["triangle", 520, 1040, 0.45, 0.2] }[kind];
+  o.type = type; o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + len);
+  gain.gain.setValueAtTime(vol, t); gain.gain.exponentialRampToValueAtTime(0.001, t + len);
+  o.connect(gain).connect(audio.destination); o.start(t); o.stop(t + len + 0.02);
+}
+
+// ── HILL ────────────────────────────────────────────────────────────────────────────
+// The hill is round: flat on top out to topR, a smooth slope down to baseR, flat snowfield beyond.
+const H = CONFIG.hillH;
+function groundY(x, z) {
+  const r = Math.hypot(x, z);
+  if (r <= CONFIG.topR) return H;
+  if (r >= CONFIG.baseR) return 0;
+  return H * 0.5 * (1 + Math.cos((Math.PI * (r - CONFIG.topR)) / (CONFIG.baseR - CONFIG.topR)));
+}
+/** Which way is downhill at (x, z), and how steep: the slope's gradient (gx, gz). */
+function slopeAt(x, z) {
+  const r = Math.hypot(x, z);
+  if (r <= CONFIG.topR || r >= CONFIG.baseR) return { gx: 0, gz: 0 };
+  const span = CONFIG.baseR - CONFIG.topR, d = -H * 0.5 * Math.sin((Math.PI * (r - CONFIG.topR)) / span) * (Math.PI / span); // height change per unit outward
+  return { gx: (d * x) / r, gz: (d * z) / r };
+}
+const onTop = (b) => Math.hypot(b.x, b.z) < CONFIG.topR && b.y > H - 0.5;
+const hill = { topMat: null, crown: null, crownMat: null };
+(function buildHill() {
+  const snowTex = canvasTex(128, 128, (c, w, h) => { c.fillStyle = "#f4f9ff"; c.fillRect(0, 0, w, h); c.fillStyle = "#dde9f7"; for (let i = 0; i < 160; i++) c.fillRect((i * 53) % w, (i * 97) % h, 3, 2); }, true);
+  snowTex.repeat.set(14, 14);
+  const field = new THREE.Mesh(new THREE.CircleGeometry(80, 64).rotateX(-Math.PI / 2), mat("#dfe9f6", { map: snowTex })); scene.add(field);
+  const pts = [new THREE.Vector2(0, H)];
+  for (let i = 0; i <= 24; i++) { const r = CONFIG.topR + ((CONFIG.baseR - CONFIG.topR) * i) / 24; pts.push(new THREE.Vector2(r, groundY(r, 0))); }
+  const slopeTex = canvasTex(64, 128, (c, w, h) => { c.fillStyle = "#ffffff"; c.fillRect(0, 0, w, h); c.fillStyle = "#cfe3f8"; c.fillRect(0, 0, w, h / 2); c.fillStyle = "#e4effb"; c.fillRect(0, h / 2 - 6, w, 6); }, true); // contour bands show how high you are
+  slopeTex.repeat.set(16, 3);
+  const mound = new THREE.Mesh(new THREE.LatheGeometry(pts, 64), mat("#ffffff", { map: slopeTex, side: THREE.DoubleSide })); scene.add(mound);
+  // the icy top: glows in the king's color
+  const iceTex = canvasTex(256, 256, (c) => {
+    const g = c.createRadialGradient(128, 128, 20, 128, 128, 128); g.addColorStop(0, "#e9f7ff"); g.addColorStop(1, "#9fd4ff"); c.fillStyle = g; c.fillRect(0, 0, 256, 256);
+    c.strokeStyle = "#ffffffaa"; c.lineWidth = 3; for (let i = 0; i < 6; i++) { c.beginPath(); c.moveTo(128, 128); c.lineTo(128 + Math.cos(i) * 120, 128 + Math.sin(i * 1.3) * 120); c.stroke(); }
+    c.strokeStyle = "#ffd23f"; c.lineWidth = 12; c.beginPath(); c.arc(128, 128, 120, 0, 7); c.stroke();
+  });
+  hill.topMat = mat("#ffffff", { map: iceTex, roughness: 0.2, metalness: 0.1, emissive: "#000000" });
+  const top = new THREE.Mesh(new THREE.CircleGeometry(CONFIG.topR, 48).rotateX(-Math.PI / 2), hill.topMat); top.position.y = H + 0.03; scene.add(top);
+  // the big crown floating over the top
+  hill.crownMat = mat("#ffd23f", { metalness: 0.5, roughness: 0.3, emissive: "#7a5200", emissiveIntensity: 0.6 });
+  const crown = new THREE.Group(), band = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 0.95, 0.7, 24, 1, true), hill.crownMat); crown.add(band);
+  for (let i = 0; i < 5; i++) { const a = (i / 5) * Math.PI * 2, spike = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.75, 8), hill.crownMat); spike.position.set(Math.cos(a) * 1.02, 0.65, Math.sin(a) * 1.02); crown.add(spike); }
+  crown.scale.setScalar(0.65); crown.position.y = H + 5; scene.add(crown); hill.crown = crown;
+  // rocks round the snowfield, pine trees beyond
+  const RK = 40, rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), mat("#8a97ab", { flatShading: true }), RK);
+  for (let i = 0; i < RK; i++) { const a = (i / RK) * Math.PI * 2, r = CONFIG.fieldR + 0.9 + (i % 2) * 0.4, s = 0.9 + (i % 3) * 0.25; rocks.setMatrixAt(i, mtx.compose(v3.set(Math.cos(a) * r, 0.3, Math.sin(a) * r), q.setFromEuler(e3.set(i, i * 2, 0)), one.set(s, s * 0.8, s))); }
+  scene.add(rocks);
+  const F = 16, poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.06, 0.06, 2.6, 6), mat("#6b4a36"), F), flags = new THREE.InstancedMesh(new THREE.BoxGeometry(0.05, 0.55, 0.9).translate(0, 0, 0.45), mat("#ffffff"), F);
+  for (let i = 0; i < F; i++) { const a = (i / F) * Math.PI * 2 + 0.1, r = CONFIG.fieldR + 0.2, x = Math.cos(a) * r, z = Math.sin(a) * r; poles.setMatrixAt(i, mtx.compose(v3.set(x, 1.3, z), q.identity(), one.set(1, 1, 1))); flags.setMatrixAt(i, mtx.compose(v3.set(x, 2.3, z), q.setFromEuler(e3.set(0, a, 0)), one.set(1, 1, 1))); flags.setColorAt(i, new THREE.Color(COLORS[i % COLORS.length])); }
+  scene.add(poles, flags); // bunting round the edge
+  const T = 30, trunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.3, 0.4, 1.6, 6), mat("#7a5236"), T);
+  const tiers = [0, 1, 2].map((k) => new THREE.InstancedMesh(new THREE.ConeGeometry(2.2 - k * 0.55, 2.4, 9), mat(k === 2 ? "#e9f4ff" : "#2f7a55", { flatShading: true }), T));
+  for (let i = 0; i < T; i++) {
+    const a = (i / T) * Math.PI * 2 + (i % 2) * 0.12, r = CONFIG.fieldR + 5 + (i % 3) * 4, s = 0.9 + (i % 4) * 0.2, x = Math.cos(a) * r, z = Math.sin(a) * r;
+    trunk.setMatrixAt(i, mtx.compose(v3.set(x, 0.8 * s, z), q.identity(), one.set(s, s, s)));
+    tiers.forEach((m, k) => m.setMatrixAt(i, mtx.compose(v3.set(x, (2.2 + k * 1.3) * s, z), q.identity(), one.set(s, s, s))));
+  }
+  scene.add(trunk, ...tiers);
+})();
+
+// ── SNOW BUDDIES ────────────────────────────────────────────────────────────────────
+const BR = CONFIG.bodyR;
+const bodyGeo = new THREE.SphereGeometry(BR, 22, 16).scale(1, 1.12, 1), bellyGeo = new THREE.SphereGeometry(BR * 0.72, 16, 12).scale(1, 1.1, 0.5);
+const eyeGeo = new THREE.SphereGeometry(0.13, 12, 8), pupilGeo = new THREE.SphereGeometry(0.07, 8, 6), hatGeo = new THREE.SphereGeometry(BR * 0.92, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2);
+const rimGeo = new THREE.TorusGeometry(BR * 0.9, 0.09, 8, 24).rotateX(Math.PI / 2), pomGeo = new THREE.SphereGeometry(0.15, 10, 8), armGeo = new THREE.CapsuleGeometry(0.11, 0.34, 3, 8), footGeo = new THREE.SphereGeometry(0.16, 10, 8).scale(1, 0.6, 1.3);
+const white = mat("#ffffff", { roughness: 0.4 }), dark = new THREE.MeshBasicMaterial({ color: "#14203a" }), bootMat = mat("#3a2a3a");
+const shadowGeo = new THREE.CircleGeometry(0.62, 18).rotateX(-Math.PI / 2), shadowMat = new THREE.MeshBasicMaterial({ color: "#1d3b6b", transparent: true, opacity: 0.32, depthWrite: false });
+const crownGeo = new THREE.CylinderGeometry(0.36, 0.28, 0.34, 5, 1, true), crownMat = mat("#ffd23f", { metalness: 0.6, roughness: 0.25, emissive: "#a06a00", side: THREE.DoubleSide });
+function makeBuddy(color, name) {
+  const g = new THREE.Group(), body = new THREE.Group(); g.add(body);
+  const skin = mat(color, { roughness: 0.6 }), hatMat = mat(new THREE.Color(color).multiplyScalar(0.55), { roughness: 0.8 });
+  const ball = new THREE.Mesh(bodyGeo, skin); ball.position.y = BR * 1.12; body.add(ball);
+  const belly = new THREE.Mesh(bellyGeo, white); belly.position.set(0, BR * 0.95, BR * 0.62); body.add(belly);
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Mesh(eyeGeo, white); eye.position.set(s * 0.2, BR * 1.55, BR * 0.78); body.add(eye);
+    const pupil = new THREE.Mesh(pupilGeo, dark); pupil.position.set(s * 0.2, BR * 1.55, BR * 0.78 + 0.1); body.add(pupil);
+  }
+  const hat = new THREE.Mesh(hatGeo, hatMat); hat.position.y = BR * 1.62; body.add(hat);
+  const rim = new THREE.Mesh(rimGeo, white); rim.position.y = BR * 1.66; body.add(rim);
+  const pom = new THREE.Mesh(pomGeo, white); pom.position.y = BR * 1.62 + BR * 0.92; body.add(pom);
+  const arms = [-1, 1].map((s) => { const pivot = new THREE.Group(); pivot.position.set(s * BR * 0.95, BR * 1.1, 0); const arm = new THREE.Mesh(armGeo, skin); arm.position.y = -0.22; pivot.add(arm); pivot.rotation.z = s * 0.5; body.add(pivot); return pivot; });
+  const feet = [-1, 1].map((s) => { const f = new THREE.Mesh(footGeo, bootMat); f.position.set(s * 0.24, 0.08, 0.05); g.add(f); return f; });
+  const crown = new THREE.Mesh(crownGeo, crownMat); crown.position.y = BR * 2.75; crown.visible = false; body.add(crown);
+  if (name && !ATTRACT) {
+    const tex = canvasTex(256, 64, (c) => { c.font = "bold 32px system-ui"; c.textAlign = "center"; c.lineWidth = 6; c.strokeStyle = "#000a"; c.strokeText(name, 128, 44); c.fillStyle = "#fff"; c.fillText(name, 128, 44); });
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false })); tag.scale.set(3, 0.75, 1); tag.position.y = 2.5; g.add(tag);
+  }
+  const shadow = new THREE.Mesh(shadowGeo, shadowMat); scene.add(shadow, g);
+  return { g, body, skin, hatMat, arms, feet, crown, shadow, color, x: 0, y: 0, z: 0, h: 0, a: 0, fresh: true, step: 0, push: 0 };
+}
+function recolor(v, color) { if (v.color !== color) { v.color = color; v.skin.color.set(color); v.hatMat.color.set(color).multiplyScalar(0.55); } }
+const views = new Map(); // id -> drawn buddy, for everyone but me
+/** Draw a buddy at (x, y, z) facing h, eased if `ease`; a = 0 idle, 1 walk, 2 shove, 3 knocked. */
+function drawBuddy(v, x, y, z, h, a, dt, ease) {
+  if (v.fresh || !ease) { v.x = x; v.y = y; v.z = z; v.h = h; v.fresh = false; }
+  const k = 1 - Math.pow(0.0005, dt);
+  v.x += (x - v.x) * k; v.y += (y - v.y) * k; v.z += (z - v.z) * k; v.h += Math.atan2(Math.sin(h - v.h), Math.cos(h - v.h)) * k;
+  if (a === 2 && v.a !== 2) { burst(v.x + Math.sin(v.h) * 1.1, v.y + 0.8, v.z + Math.cos(v.h) * 1.1, "#ffffff", 8, 3, 0.6); if (Math.hypot(v.x - camLook.x, v.z - camLook.z) < 14) sfx("whoosh"); }
+  v.a = a; v.g.visible = true; v.g.position.set(v.x, v.y, v.z); v.g.rotation.y = v.h;
+  v.step += dt * (a === 1 ? 13 : 0); const s = Math.sin(v.step);
+  v.feet[0].position.z = 0.05 + (a === 1 ? s * 0.2 : 0); v.feet[1].position.z = 0.05 - (a === 1 ? s * 0.2 : 0);
+  v.body.position.y = a === 1 ? Math.abs(s) * 0.08 : 0;
+  v.push += ((a === 2 ? 1 : 0) - v.push) * Math.min(1, dt * 25); // arms shoot forward on a shove
+  v.arms.forEach((arm, i) => { const side = i ? 1 : -1; arm.rotation.x = -v.push * 1.5; arm.rotation.z = side * 0.5 * (1 - v.push); });
+  v.body.rotation.x = a === 2 ? 0.25 : a === 3 ? -0.3 : 0;
+  v.body.rotation.z = a === 3 ? Math.sin(performance.now() / 45) * 0.35 : 0;
+  v.shadow.position.set(v.x, groundY(v.x, v.z) + 0.04, v.z); v.shadow.visible = true;
+  v.shadow.scale.setScalar(Math.max(0.4, 1 - (v.y - groundY(v.x, v.z)) * 0.15));
+}
+function hideBuddy(v) { v.g.visible = false; v.shadow.visible = false; }
+
+// ── PHYSICS ─────────────────────────────────────────────────────────────────────────
+const newBody = () => ({ x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, h: 0, a: 0, onGround: true, stun: 0, shoveCd: 0, shoveT: 0,
+  pace: 1, skill: 0.9, spot: null, spotAt: 0, err: 0, errAt: 0 });
+/** One step for a buddy (yours or a bot's): input mx/mz in -1..1. Returns true if it shoved this step. */
+function stepBody(b, mx, mz, shove, dt) {
+  const len = Math.hypot(mx, mz); if (len > 1) { mx /= len; mz /= len; }
+  b.stun = Math.max(0, b.stun - dt); b.shoveCd = Math.max(0, b.shoveCd - dt); b.shoveT = Math.max(0, b.shoveT - dt);
+  let shoved = false;
+  if (shove && b.shoveCd <= 0 && b.stun <= 0 && b.onGround) {
+    if (len > 0.2) b.h = Math.atan2(mx, mz); // shove the way you're pushing the stick
+    b.vx += Math.sin(b.h) * CONFIG.shoveLunge; b.vz += Math.cos(b.h) * CONFIG.shoveLunge;
+    b.shoveCd = CONFIG.shoveCooldown; b.shoveT = 0.22; shoved = true;
+  }
+  if (b.onGround) {
+    const k = Math.min(1, CONFIG.accel * (b.stun > 0 ? 0.04 : 1) * dt);
+    if (b.shoveT <= 0) { b.vx += (mx * CONFIG.speed - b.vx) * k; b.vz += (mz * CONFIG.speed - b.vz) * k; }
+    const s = slopeAt(b.x, b.z), pull = CONFIG.slide * (b.stun > 0 ? 1.8 : 1);
+    b.vx -= s.gx * pull * dt; b.vz -= s.gz * pull * dt; // the slope pulls you down
+  }
+  b.x += b.vx * dt; b.z += b.vz * dt;
+  const r = Math.hypot(b.x, b.z), max = CONFIG.fieldR - BR;
+  if (r > max) { const nx = b.x / r, nz = b.z / r, vn = b.vx * nx + b.vz * nz; b.x = nx * max; b.z = nz * max; if (vn > 0) { b.vx -= vn * nx * 1.6; b.vz -= vn * nz * 1.6; } }
+  const gy = groundY(b.x, b.z);
+  if (b.onGround && b.y - gy < 0.6) b.y = gy; // walking: stick to the snow
+  else { b.onGround = false; b.vy -= CONFIG.gravity * dt; b.y += b.vy * dt; if (b.y <= gy) { b.y = gy; b.vy = 0; b.onGround = true; } }
+  const sp = Math.hypot(b.vx, b.vz);
+  if (len > 0.2 && b.stun <= 0 && b.shoveT <= 0) b.h += Math.atan2(Math.sin(Math.atan2(mx, mz) - b.h), Math.cos(Math.atan2(mx, mz) - b.h)) * Math.min(1, 12 * dt);
+  b.a = b.stun > 0 ? 3 : b.shoveT > 0 ? 2 : sp > 0.8 && b.onGround ? 1 : 0;
+  return shoved;
+}
+/** A shove landed on this body: off it flies. */
+function knock(b, vx, vy, vz) { b.vx = vx; b.vy = vy; b.vz = vz; b.onGround = false; b.stun = CONFIG.stunTime; b.shoveT = 0; b.restUntil = performance.now() + 600 + Math.random() * 1800 * (1.2 - (b.skill || 0.9)); }
+/** Push body b out of the others so buddies don't stand inside each other (only at about the same height). */
+function separate(b, others) {
+  for (const o of others) {
+    const dx = b.x - o.x, dz = b.z - o.z, d = Math.hypot(dx, dz);
+    if (d < 2 * BR && d > 1e-4 && Math.abs((o.y || 0) - b.y) < 1.2) { const push = (2 * BR - d) * 0.5; b.x += (dx / d) * push; b.z += (dz / d) * push; }
+  }
+}
+const spawnAt = (i, n) => { const a = Math.PI / 2 + (i / Math.max(1, n)) * Math.PI * 2; return { x: Math.cos(a) * 14, y: 0, z: Math.sin(a) * 14, h: Math.atan2(-Math.cos(a), -Math.sin(a)) }; };
+
+// ── GAME (HOST) ─────────────────────────────────────────────────────────────────────
+const host = { bots: new Map(), wasHost: false, last: null, id: -1, lastBots: 0, acc: new Map() }; // acc: id -> seconds alone on top not yet paid out
+/** The game as state has it, or the host's own newer write that hasn't come back yet. `v` only goes up. */
+function game() { const g = shared("game", null); return host.last && isHost() && (!g || host.last.v > g.v) ? host.last : g; }
+function writeGame(g) { g = { ...g, v: (game()?.v ?? 0) + 1 }; host.last = g; net.setShared("game", JSON.stringify(g)); return g; }
+const rosterName = (g, id) => (g.roster.find((r) => r[0] === id) || [id, "Player"])[1];
+const rosterColor = (g, id) => (id === net.sessionId ? myColor : S.entities.players[id]?.c || (g.roster.find((r) => r[0] === id) || [id, "", "#ccc"])[2]);
+
+function hostTick(dt) {
+  if (!host.wasHost) adopt();
+  let g = game();
+  const now = Date.now();
+  if (!g) g = newGame(1);
+  if (g.phase === "results" && now >= g.endsAt) g = newGame(g.id + 1);
+  const bodies = hostBodies(g);
+  botsTick(dt, g, bodies);
+  if (g.phase === "play") g = scoreTick(g, bodies, dt, now);
+}
+/** Become host: take over the bots exactly as state has them (the clock and scores are already in `game`). */
+function adopt() {
+  host.wasHost = true; host.bots.clear(); host.id = game()?.id ?? -1; host.acc.clear();
+  for (const b of shared("bots", [])) host.bots.set(b.i, { ...newBody(), id: b.i, name: b.n, color: b.c, x: b.x, y: b.y, z: b.z, vx: b.vx, vz: b.vz, h: b.h, ...botTraits() });
+}
+const botTraits = () => ({ pace: 0.82 + Math.random() * 0.14, skill: 0.5 + Math.random() * 0.45, patient: Math.random() < 0.5 });
+function syncBots(want, humans) {
+  const used = new Set(humans.map(colorOf));
+  for (const b of host.bots.values()) { if (used.has(b.color)) b.color = COLORS.find((c) => !used.has(c)) || b.color; used.add(b.color); }
+  for (let i = 1; host.bots.size < want && i < 64; i++) if (!host.bots.has("@" + i)) {
+    const color = COLORS.find((c) => !used.has(c)) || COLORS[i % COLORS.length]; used.add(color);
+    host.bots.set("@" + i, { ...newBody(), id: "@" + i, name: BOT_NAMES[(i - 1) % BOT_NAMES.length], color, ...botTraits() });
+  }
+  while (host.bots.size > Math.max(0, want)) host.bots.delete([...host.bots.keys()].pop());
+}
+/** A new game: bots up to the seats, everyone back to the snowfield's edge, scores at zero. */
+function newGame(id) {
+  const humans = livePlayers(), now = Date.now();
+  syncBots(CONFIG.seats - humans.length, humans);
+  const ids = [...humans, ...host.bots.keys()];
+  host.acc.clear();
+  return writeGame({ id, phase: "play", startAt: now + CONFIG.startMs, endsAt: now + CONFIG.startMs + CONFIG.gameMs, score: {}, king: "", order: ids,
+    roster: ids.map((x) => [x, nameOf(x), colorOf(x)]), win: null, endedAt: 0 });
+}
+/** Time alone on the top adds up per player; every whole second of it is a point. Ends the game when the clock runs out. */
+function scoreTick(g, bodies, dt, now) {
+  if (now < g.startAt) return g;
+  if (now >= g.endsAt) {
+    const best = Math.max(0, ...Object.values(g.score)), top = Object.keys(g.score).filter((id) => g.score[id] === best && best > 0);
+    return writeGame({ ...g, phase: "results", king: "", win: top.length === 1 ? top[0] : null, endedAt: now, endsAt: now + CONFIG.resultsMs });
+  }
+  const up = bodies.filter((o) => onTop(o.b)), king = up.length === 1 ? up[0].id : up.length > 1 ? "*" : "";
+  let changed = king !== g.king, score = g.score, roster = g.roster;
+  if (king && king !== "*") {
+    const held = (host.acc.get(king) || 0) + dt; host.acc.set(king, held);
+    if (held >= 1) {
+      host.acc.set(king, held - 1); score = { ...score, [king]: (score[king] || 0) + 1 }; changed = true;
+      if (!roster.some((r) => r[0] === king)) roster = [...roster, [king, nameOf(king), colorOf(king)]]; // someone who joined mid-game
+    }
+  }
+  return changed ? writeGame({ ...g, king, score, roster }) : g;
+}
+/** A shove from `id` standing at (x, y, z) facing h: knock everyone in front of it (host only). */
+function resolveShove(g, id, x, y, z, h) {
+  const fx = Math.sin(h), fz = Math.cos(h);
+  for (const o of hostBodies(g)) {
+    if (o.id === id) continue;
+    const dx = o.b.x - x, dz = o.b.z - z, d = Math.hypot(dx, dz);
+    if (d > CONFIG.shoveReach || d < 0.01 || (dx * fx + dz * fz) / d < CONFIG.shoveCone || Math.abs(o.b.y - y) > 1.4) continue;
+    let nx = (dx / d) * 0.6 + fx * 0.4, nz = (dz / d) * 0.6 + fz * 0.4; const l = Math.hypot(nx, nz) || 1; nx /= l; nz /= l;
+    const r2 = (v) => Math.round(v * 100) / 100, m = { to: o.id, vx: r2(nx * CONFIG.shovePower), vy: CONFIG.shoveUp, vz: r2(nz * CONFIG.shovePower), x: r2(o.b.x), y: r2(o.b.y), z: r2(o.b.z) };
+    if (o.local) knock(o.b, m.vx, m.vy, m.vz);
+    net.send("knock", m); knockFx(m);
+  }
+}
+/** A "shove" from another player: check it was where the host has it, then resolve it. */
+function onShove(m, from) {
+  const g = game(); if (!g || g.phase !== "play") return;
+  const o = hostBodies(g).find((x) => x.id === from);
+  if (!o || Math.hypot(o.b.x - m.x, o.b.z - m.z) > 3.5 || !isFinite(m.h)) return;
+  resolveShove(g, from, +m.x, +m.y, +m.z, +m.h);
+}
+/** Everyone on the snow, as the host sees it: its own buddy, the bots, and everyone else at their
+ *  latest position moved on by their velocity. `local` ones the host moves itself. */
+function hostBodies(g) {
+  const out = [], now = performance.now(), live = livePlayers();
+  out.push({ id: net.sessionId, b: me, local: true });
+  for (const b of host.bots.values()) out.push({ id: b.id, b, local: true });
+  for (const id of live) {
+    if (id === net.sessionId) continue;
+    const r = remoteOf(id); if (!r || r.p.k !== g.id) continue;
+    const age = Math.min(0.15, (now - r.at) / 1000);
+    out.push({ id, b: { x: r.p.x + r.p.vx * age, y: r.p.y, z: r.p.z + r.p.vz * age, vx: r.p.vx, vz: r.p.vz }, local: false });
+  }
+  return out;
+}
+function botsTick(dt, g, bodies) {
+  if (host.id !== g.id) { // a new game: bots to the edge of the snowfield
+    host.id = g.id;
+    for (const b of host.bots.values()) Object.assign(b, spawnAt(Math.max(0, g.order.indexOf(b.id)), g.order.length), { vx: 0, vy: 0, vz: 0, stun: 0, onGround: true, spot: null });
+  }
+  const others = bodies.map((o) => o.b), waiting = Date.now() < g.startAt;
+  for (const b of host.bots.values()) {
+    const inp = g.phase === "play" && !waiting ? botBrain(b, b.id, bodies) : { mx: 0, mz: 0, shove: false };
+    if (stepBody(b, inp.mx, inp.mz, inp.shove, dt) && g.phase === "play") resolveShove(g, b.id, b.x, b.y, b.z, b.h);
+    separate(b, others.filter((o) => o !== b));
+  }
+  const now = performance.now();
+  if (now - host.lastBots > 90) { host.lastBots = now; net.setShared("bots", JSON.stringify(botList())); }
+}
+/** A bot's (or the ?attract autopilot's) input: climb to a spot on top, shove whoever is in the way or up there with it. */
+function botBrain(b, id, bodies) {
+  const now = performance.now();
+  if (now > b.errAt) { b.errAt = now + 300 + Math.random() * 400; b.err = (Math.random() - 0.5) * (1 - b.skill) * 1.4; }
+  if (!b.spot || now > b.spotAt) { const a = Math.random() * Math.PI * 2, r = Math.random() * CONFIG.topR * 0.6; b.spot = { x: Math.cos(a) * r, z: Math.sin(a) * r }; b.spotAt = now + 2000 + Math.random() * 2500; }
+  if (now < (b.restUntil || 0)) { // just got shoved off: get up, shake it off, wander a moment
+    const a = Math.atan2(b.x, b.z) + 0.8; return { mx: Math.sin(a) * 0.5 * b.pace, mz: Math.cos(a) * 0.5 * b.pace, shove: false };
+  }
+  // a patient bot waits on the slope while two or more scrap on top, then goes for the winner
+  const crowd = bodies.filter((o) => o.id !== id && onTop(o.b)).length;
+  if (b.patient && crowd >= 2 && !onTop(b) && Math.hypot(b.x, b.z) > CONFIG.topR + 1) {
+    const a = Math.atan2(b.x, b.z), r = Math.hypot(b.x, b.z), out = r < CONFIG.topR + 3 ? 0.6 : 0; return { mx: (Math.sin(a) * out + Math.cos(a) * 0.3) * b.pace, mz: (Math.cos(a) * out - Math.sin(a) * 0.3) * b.pace, shove: false };
+  }
+  // someone close and up near the top (or in my way): go at them and shove when they're in front
+  const king = onTop(b) && Math.hypot(b.x, b.z) < CONFIG.topR * 0.7; // already up there: hold the middle, only fight who comes close
+  let foe = null, best = 1e9;
+  for (const o of bodies) {
+    if (o.id === id || Math.abs(o.b.y - b.y) > 1.3) continue;
+    const d = Math.hypot(o.b.x - b.x, o.b.z - b.z), contested = Math.hypot(o.b.x, o.b.z) < CONFIG.topR + 1.5;
+    if (d < (king ? 2.6 : contested ? 4.5 : 2.2) && d < best) { best = d; foe = o.b; }
+  }
+  let tx = b.spot.x, tz = b.spot.z;
+  if (foe) { tx = foe.x; tz = foe.z; }
+  const dx = tx - b.x, dz = tz - b.z, d = Math.hypot(dx, dz) || 1;
+  const a = Math.atan2(dx, dz) + b.err, near = !foe && d < 0.5;
+  const facing = foe ? Math.cos(b.h - Math.atan2(foe.x - b.x, foe.z - b.z)) : 0;
+  const shove = !!foe && best < CONFIG.shoveReach * 0.95 && facing > 0.75 && Math.random() < 0.12 * b.skill;
+  return { mx: near ? 0 : Math.sin(a) * b.pace, mz: near ? 0 : Math.cos(a) * b.pace, shove };
+}
+function botList() {
+  if (!isHost()) return shared("bots", []);
+  const r2 = (v) => Math.round(v * 100) / 100;
+  return [...host.bots.values()].map((b) => ({ i: b.id, n: b.name, c: b.color, x: r2(b.x), y: r2(b.y), z: r2(b.z), vx: r2(b.vx), vz: r2(b.vz), h: r2(b.h), a: b.a }));
+}
+
+// ── ME ──────────────────────────────────────────────────────────────────────────────
+let myName = "", myColor = COLORS[0]; // the color is picked on join: the first one nobody has
+try { myName = localStorage.getItem("mpa-name") || ""; } catch {}
+if (!myName) myName = ["Frosty", "Chilly", "Snowy", "Lucky", "Jolly", "Brave"][Math.floor(Math.random() * 6)] + " " + ["Mitten", "Boots", "Penguin", "Flake", "Muffin"][Math.floor(Math.random() * 5)];
+const me = { ...newBody(), lastSend: 0, lastJson: "", view: null };
+const local = { gameId: -1, bigUntil: 0, big: "", shake: 0, lastBeep: 0, king: "", myScore: 0, popUntil: 0 };
+const nameOf = (id) => (id === net.sessionId ? myName : isBot(id) ? host.bots.get(id)?.name || "Bot" : S.entities.players[id]?.n || "Player");
+const colorOf = (id) => (id === net.sessionId ? myColor : isBot(id) ? host.bots.get(id)?.color || "#ccc" : S.entities.players[id]?.c || "#ccc");
+const remotes = new Map(); // id -> { raw, p, at }: everyone's latest `p`, and when it arrived (on our clock)
+function remoteOf(id) {
+  const raw = S.entities.players[id]?.p; if (typeof raw !== "string") return null;
+  let r = remotes.get(id);
+  if (!r || r.raw !== raw) { const p = parse(raw, null); if (!p) return null; r = { raw, p, at: performance.now() }; remotes.set(id, r); }
+  return r;
+}
+let botsSeen = { raw: "", at: 0 };
+
+/** Things everyone notices in state: a new game (back to the edge), a new king, my points going up. */
+function watchState(g) {
+  if (g.id !== local.gameId) {
+    local.gameId = g.id; local.myScore = g.score[net.sessionId] || 0; $("over").hidden = true;
+    const i = g.order.indexOf(net.sessionId), sp = spawnAt(i >= 0 ? i : Math.floor(Math.random() * 8), i >= 0 ? g.order.length : 8);
+    Object.assign(me, sp, { vx: 0, vy: 0, vz: 0, stun: 0, onGround: true }); me.y = groundY(me.x, me.z);
+    for (const v of views.values()) v.fresh = true;
+  }
+  const mine = g.score[net.sessionId] || 0;
+  if (mine > local.myScore) { $("pop").textContent = `+${mine - local.myScore}`; $("pop").classList.add("on"); local.popUntil = performance.now() + 250; sfx("point"); burst(me.x, me.y + 1.6, me.z, "#ffd23f", 10, 4); }
+  local.myScore = mine;
+  if (performance.now() > local.popUntil) $("pop").classList.remove("on");
+  if (g.king !== local.king) {
+    if (g.king === net.sessionId) bigText("<small>Hold it alone to score</small>YOU'RE KING!", 1300);
+    local.king = g.king;
+  }
+}
+function myTick(dt, g) {
+  const waiting = g.phase === "play" && Date.now() < g.startAt;
+  const inp = waiting ? { mx: 0, mz: 0, shove: false } : ATTRACT ? botBrain(me, net.sessionId, hostBodies(g)) : readInput();
+  if (stepBody(me, inp.mx, inp.mz, inp.shove, dt) && g.phase === "play") {
+    if (isHost()) resolveShove(g, net.sessionId, me.x, me.y, me.z, me.h);
+    else { const r2 = (v) => Math.round(v * 100) / 100; net.send("shove", { x: r2(me.x), y: r2(me.y), z: r2(me.z), h: r2(me.h) }); }
+  }
+  separate(me, [...views.values()].filter((v) => v.g.visible));
+  publish(g.id);
+}
+function publish(k) {
+  const now = performance.now();
+  if (now - me.lastSend < 66) return; // ~15/s
+  me.lastSend = now;
+  const r2 = (v) => Math.round(v * 100) / 100;
+  const json = JSON.stringify({ k, x: r2(me.x), y: r2(me.y), z: r2(me.z), vx: r2(me.vx), vz: r2(me.vz), h: r2(me.h), a: me.a });
+  if (json !== me.lastJson) { me.lastJson = json; net.me.set("p", json); } // standing still sends nothing
+}
+/** A shove hit someone: puff and thump for everyone; if it's me, off I go. */
+function knockFx(m) {
+  if (m.to === net.sessionId && !isHost()) knock(me, +m.vx, +m.vy, +m.vz);
+  burst(m.x, m.y + 1, m.z, "#ffffff", 14, 6, 0.8); burst(m.x, m.y + 1.4, m.z, "#ffd23f", 5, 4, 1);
+  if (m.to === net.sessionId) local.shake = 0.6;
+  if (Math.hypot(m.x - camLook.x, m.z - camLook.z) < 16) sfx("thump", m.to === net.sessionId ? 1 : 0.5);
+}
+
+// ── HUD & RESULTS ───────────────────────────────────────────────────────────────────
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const bigText = (html, ms) => { local.big = html; local.bigUntil = performance.now() + ms; };
+let board = null, boardFor = -1;
+const startedAt = performance.now();
+function hud(g) {
+  const now = Date.now(), toGo = (g.startAt - now) / 1000;
+  const nm = (id) => (id === net.sessionId ? "You" : g.roster.some((r) => r[0] === id) ? rosterName(g, id) : nameOf(id));
+  let big = performance.now() < local.bigUntil ? local.big : "";
+  if (g.phase === "play" && toGo > 0) big = toGo > 3 ? "<small>Get to the top!</small>KING OF THE HILL" : String(Math.ceil(toGo));
+  else if (g.phase === "play" && toGo > -0.8) big = "GO!";
+  if (g.phase === "play" && toGo > 0 && toGo <= 3 && Math.ceil(toGo) !== local.lastBeep) { local.lastBeep = Math.ceil(toGo); sfx("beep"); }
+  if (g.phase === "play" && toGo <= 0 && local.lastBeep > 0) { local.lastBeep = 0; sfx("go"); }
+  $("big").innerHTML = ATTRACT ? "" : big;
+  if (ATTRACT) { $("top").textContent = $("msg").textContent = $("net").textContent = $("ranks").textContent = ""; return; }
+  const secs = Math.max(0, Math.ceil((g.endsAt - now) / 1000)), clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
+  const k = g.king, mine = k === net.sessionId;
+  $("top").className = mine ? "hud king" : "hud";
+  $("top").innerHTML = g.phase === "results" ? "" : `${!k ? "Nobody's on top" : k === "*" ? "Contested! Nobody scores" : mine ? "👑 You're king! +1 every second" : `👑 ${esc(nm(k))} is king`}<small>${clock} left</small>`;
+  $("msg").textContent = performance.now() - startedAt < 15000 && g.phase === "play" ? (touchUI ? "Drag to move · tap SHOVE · stand alone on the top to score!" : "Move with WASD · Space to shove · stand alone on the top to score!") : "";
+  const ids = [...new Set([...g.order, ...livePlayers(), ...Object.keys(g.score)])].filter((id) => isBot(id) ? botList().some((b) => b.i === id) || g.score[id] : id === net.sessionId || livePlayers().includes(id) || g.score[id]);
+  ids.sort((a, b) => (g.score[b] || 0) - (g.score[a] || 0));
+  $("ranks").innerHTML = g.phase === "results" ? "" : ids.slice(0, 8).map((id) => `<div class="${id === net.sessionId ? "me" : ""}"><i style="background:${esc(rosterColor(g, id))}"></i>${esc(nm(id))}${id === k ? " 👑" : ""}<b>${g.score[id] || 0}</b></div>`).join("");
+  const n = livePlayers().length;
+  $("net").textContent = net.offline ? "Offline: playing with bots" : dropped ? "Reconnecting…" : `Online · ${n} player${n === 1 ? "" : "s"}${isHost() ? " · you run the hill" : ""}`;
+  $("over").hidden = !(g.phase === "results" && now - g.endedAt > 1500);
+  if (g.phase === "results") results(g, now, nm);
+}
+function results(g, now, nm) {
+  const mine = g.score[net.sessionId] || 0;
+  $("title").textContent = g.win === net.sessionId ? `You're the king! ${mine} points 👑` : g.win ? `${nm(g.win)} is the king! 👑` : "It's a tie!";
+  const order = [...new Set([...g.roster.map((r) => r[0]), ...Object.keys(g.score)])].sort((a, b) => (g.score[b] || 0) - (g.score[a] || 0));
+  $("results").innerHTML = order.slice(0, 10).map((id) => `<li class="${id === net.sessionId ? "me" : ""}">${esc(nm(id))}${id === g.win ? " 👑" : ""}<span>${g.score[id] || 0} pts</span></li>`).join("");
+  $("next").textContent = `Next game in ${Math.max(0, Math.ceil((g.endsAt - now) / 1000))}s`;
+  if (boardFor !== g.id) { boardFor = g.id; showBoard(mine); if (g.win === net.sessionId) sfx("win"); }
+}
+function showBoard(score) {
+  const list = $("board");
+  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
+  list.innerHTML = "<li>Loading…</li>";
+  (score > 0 ? board.submit(score).catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score} pts</span></li>`).join("") : "<li>No scores yet. Be the first.</li>";
+  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+}
+$("again").onclick = () => { const g = game(); if (!g || g.phase !== "results") return; if (isHost()) playAgain(g); else net.send("again", {}); $("over").hidden = true; };
+const playAgain = (g) => { if (g.phase === "results") writeGame({ ...g, endsAt: Math.min(g.endsAt, Date.now() + 1200) }); };
+/** Two players picked the same color at once (the joiner's first state can be empty): the later sessionId
+ *  picks again. A bot wearing my color makes me pick again too (the host only recolors bots between games). */
+function fixColor() {
+  const others = Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId), botColors = botList().map((b) => b.c);
+  if (!others.some(([id, p]) => p.c === myColor && id < net.sessionId) && !botColors.includes(myColor)) return;
+  const taken = new Set([...others.map(([, p]) => p.c), ...botColors]);
+  myColor = COLORS.find((c) => !taken.has(c)) || myColor; net.me.set("c", myColor);
+  if (me.view) recolor(me.view, myColor);
+}
+
+// ── INPUT ───────────────────────────────────────────────────────────────────────────
+const touchUI = matchMedia("(pointer: coarse)").matches && !ATTRACT;
+$("shove").hidden = !touchUI;
+const keys = new Set(), stick = { id: -1, x: 0, y: 0, mx: 0, mz: 0 };
+let shoveAt = 0;
+addEventListener("keydown", (e) => {
+  unlockAudio(); keys.add(e.key.toLowerCase());
+  if (e.key === " " || e.key === "Shift") { e.preventDefault(); shoveAt = performance.now(); }
+});
+addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+function readInput() {
+  const k = (a, b) => (keys.has(a) || keys.has(b) ? 1 : 0);
+  const mx = k("d", "arrowright") - k("a", "arrowleft") + stick.mx, mz = k("s", "arrowdown") - k("w", "arrowup") + stick.mz;
+  return { mx, mz, shove: performance.now() - shoveAt < 150 };
+}
+const cv = renderer.domElement;
+cv.addEventListener("pointerdown", (e) => {
+  unlockAudio();
+  if (e.pointerType === "mouse" || stick.id >= 0) return;
+  e.preventDefault(); cv.setPointerCapture(e.pointerId);
+  Object.assign(stick, { id: e.pointerId, x: e.clientX, y: e.clientY, mx: 0, mz: 0 });
+  Object.assign($("stick").style, { left: e.clientX + "px", top: e.clientY + "px" }); $("stick").hidden = false;
+});
+cv.addEventListener("pointermove", (e) => {
+  if (e.pointerId !== stick.id) return;
+  const dx = e.clientX - stick.x, dy = e.clientY - stick.y, d = Math.hypot(dx, dy), k = Math.min(1, d / 50) / (d || 1);
+  stick.mx = dx * k; stick.mz = dy * k;
+  $("stick").firstElementChild.style.transform = `translate(${stick.mx * 35}px, ${stick.mz * 35}px)`;
+});
+for (const ev of ["pointerup", "pointercancel"]) cv.addEventListener(ev, (e) => { if (e.pointerId === stick.id) { Object.assign(stick, { id: -1, mx: 0, mz: 0 }); $("stick").hidden = true; } });
+const sb = $("shove");
+sb.addEventListener("pointerdown", (e) => { e.preventDefault(); unlockAudio(); shoveAt = performance.now(); sb.classList.add("on"); });
+for (const ev of ["pointerup", "pointercancel", "pointerleave"]) sb.addEventListener(ev, () => sb.classList.remove("on"));
+document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+
+// ── MAIN LOOP ───────────────────────────────────────────────────────────────────────
+let last = performance.now(), lastHb = 0, lastHud = 0;
+const camPos = new THREE.Vector3(0, 16, 24), camLook = new THREE.Vector3(0, H, 0);
+function frame(now) {
+  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000)); last = now;
+  if (now - lastHb > 1000) { lastHb = now; net.me.set("hb", Date.now()); fixColor(); }
+  if (isHost()) hostTick(dt); else host.wasHost = false;
+  const g = game();
+  if (g) { watchState(g); myTick(dt, g); drawWorld(dt, g, now); }
+  drawScenery(dt, now);
+  renderer.render(scene, camera);
+  if (g && now - lastHud > 100) { lastHud = now; hud(g); }
+  sb.classList.toggle("wait", me.shoveCd > 0);
+  requestAnimationFrame(frame);
+}
+function drawWorld(dt, g, now) {
+  const seen = new Set(), pnow = performance.now(), live = livePlayers();
+  for (const [id, p] of Object.entries(S.entities.players || {})) {
+    if (id === net.sessionId || !live.includes(id)) continue;
+    const r = remoteOf(id);
+    if (!r || r.p.k !== g.id) continue;
+    seen.add(id);
+    if (!views.has(id)) views.set(id, makeBuddy(p.c || "#ccc", p.n || "Player"));
+    const v = views.get(id), age = Math.min(0.12, (pnow - r.at) / 1000);
+    recolor(v, p.c || "#ccc");
+    drawBuddy(v, r.p.x + r.p.vx * age, r.p.y, r.p.z + r.p.vz * age, r.p.h, r.p.a, dt, true);
+  }
+  const hosting = isHost(), raw = S.shared.bots;
+  if (!hosting && raw !== botsSeen.raw) botsSeen = { raw, at: pnow };
+  const age = hosting ? 0 : Math.min(0.12, (pnow - botsSeen.at) / 1000);
+  for (const b of botList()) {
+    seen.add(b.i);
+    if (!views.has(b.i)) views.set(b.i, makeBuddy(b.c, b.n));
+    const v = views.get(b.i); recolor(v, b.c);
+    drawBuddy(v, b.x + (b.vx || 0) * age, b.y, b.z + (b.vz || 0) * age, b.h, b.a, dt, !hosting);
+  }
+  const champ = g.phase === "results" ? g.win : g.king;
+  for (const [id, v] of views) { if (!seen.has(id)) hideBuddy(v); v.crown.visible = champ === id; }
+  if (!me.view) me.view = makeBuddy(myColor, "");
+  drawBuddy(me.view, me.x, me.y, me.z, me.h, me.a, dt, false);
+  me.view.crown.visible = champ === net.sessionId;
+  // the icy top and the floating crown show the king's color; red flashes when it's contested
+  const kc = g.king && g.king !== "*" ? rosterColor(g, g.king) : null;
+  hill.topMat.emissive.set(g.king === "*" ? (Math.sin(now / 90) > 0 ? "#5a1010" : "#000000") : kc || "#000000"); hill.topMat.emissiveIntensity = kc ? 0.35 : 1;
+  hill.crown.rotation.y = now / 1200; hill.crown.position.y = H + 5 + Math.sin(now / 500) * 0.25;
+  hill.crownMat.emissive.set(kc || "#7a5200");
+  if (champ && champ !== "*" && Math.random() < dt * 6) { const w = champ === net.sessionId ? me.view : views.get(champ); if (w) burst(w.x, w.y + 1.9, w.z, g.phase === "results" ? COLORS[Math.floor(Math.random() * COLORS.length)] : "#ffd23f", g.phase === "results" ? 8 : 2, 3, 1); }
+  // camera: behind and above me, leaning toward the hill so the top stays in view; ?attract circles the hill
+  if (ATTRACT) {
+    const a = now / 9000;
+    camPos.set(Math.sin(a) * 9.5, H + 10.5, Math.cos(a) * 9.5); camera.position.lerp(camPos, 0.05); camLook.set(0, H - 0.6, 0);
+  } else {
+    // look at the point halfway between me and the top, from further back the further out I am
+    const far = (camera.aspect < 1 ? 1.2 + 0.4 / Math.max(0.45, camera.aspect) : 1) * (0.75 + 0.25 * Math.min(1, Math.hypot(me.x, me.z) / 14));
+    const fx = me.x * 0.5, fz = me.z * 0.5, fy = me.y * 0.5 + 1;
+    camPos.set(fx, fy + 20 * far, fz + 13 * far * (camera.aspect < 1 ? 0.7 : 1)); camLook.set(fx, fy, fz); // steep enough that the hill never hides you
+    camera.position.lerp(camPos, 1 - Math.pow(0.02, dt));
+  }
+  local.shake *= Math.exp(-dt * 6);
+  camera.lookAt(camLook);
+  if (local.shake > 0.01) camera.position.add(v3.set((Math.random() - 0.5) * local.shake, (Math.random() - 0.5) * local.shake, 0));
+}
+
+(async function start() {
+  net = await connect();
+  net.onState((st) => { S = st; });
+  net.on("shove", (m, from) => { if (isHost() && m && typeof m === "object") onShove(m, from); });
+  net.on("knock", (m) => { if (m && typeof m === "object") knockFx(m); });
+  net.on("again", () => { const g = game(); if (isHost() && g) playAgain(g); });
+  net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
+  net.onReconnect(() => { dropped = false; });
+  if (!net.offline && typeof MP !== "undefined") board = MP.auth({ key: MP_CONNECT.key, apiUrl: MP_CONNECT.apiUrl }).leaderboard(CONFIG.board);
+  const taken = new Set([...Object.entries(S.entities.players || {}).filter(([id]) => id !== net.sessionId).map(([, p]) => p.c), ...parse(S.shared.bots, []).map((b) => b.c)]);
+  myColor = COLORS.find((c) => !taken.has(c)) || COLORS[Math.floor(Math.random() * COLORS.length)];
+  net.me.set({ n: myName, c: myColor, hb: Date.now() });
+  if (ATTRACT) Object.assign(CONFIG, { seats: 8, startMs: 400, gameMs: 40000, resultsMs: 2500 });
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
