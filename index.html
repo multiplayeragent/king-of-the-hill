@@ -32,6 +32,7 @@
   .card ol { margin: 0; padding-left: 24px; font-size: 14px; }
   .card li span { float: right; font-variant-numeric: tabular-nums; }
   .card li.me { color: #ffd23f; font-weight: 700; }
+  .card li.note { list-style: none; margin-left: -18px; opacity: .85; }
   .card p { margin: 10px 0; font-size: 13px; opacity: .85; }
   button.go { width: 100%; min-height: 48px; border: 0; border-radius: 12px; background: #ffd23f; color: #1d3b6b; font: 800 17px system-ui, sans-serif; cursor: pointer; }
   #stick { position: fixed; width: 120px; height: 120px; margin: -60px 0 0 -60px; border-radius: 50%; background: #ffffff22; border: 2px solid #ffffff77; pointer-events: none; }
@@ -55,7 +56,7 @@
 <button id="shove" hidden>SHOVE</button>
 <div id="over" hidden><div class="card">
   <h2 id="title">Time's up</h2><ol id="results"></ol>
-  <h3>Best scores</h3><ol id="board"><li>Loading…</li></ol>
+  <h3>Best scores</h3><ol id="board"><li class="note">Loading…</li></ol>
   <p id="next"></p>
   <button class="go" id="again">Play again</button>
 </div></div>
@@ -630,7 +631,7 @@ function hud(g) {
   else if (g.phase === "play" && toGo > -0.8) big = "GO!";
   if (g.phase === "play" && toGo > 0 && toGo <= 3 && Math.ceil(toGo) !== local.lastBeep) { local.lastBeep = Math.ceil(toGo); sfx("beep"); }
   if (g.phase === "play" && toGo <= 0 && local.lastBeep > 0) { local.lastBeep = 0; sfx("go"); }
-  $("big").innerHTML = ATTRACT ? "" : big;
+  $("big").innerHTML = ATTRACT || !big ? "" : `<div>${big}</div>`; // one block, so the small line sits right above the big one
   if (ATTRACT) { $("top").textContent = $("msg").textContent = $("net").textContent = $("ranks").textContent = ""; return; }
   const secs = Math.max(0, Math.ceil((g.endsAt - now) / 1000)), clock = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, "0")}`;
   const k = g.king, mine = k === net.sessionId;
@@ -655,11 +656,11 @@ function results(g, now, nm) {
 }
 function showBoard(score) {
   const list = $("board");
-  if (!board) { list.innerHTML = "<li>Leaderboards need a connection.</li>"; return; }
-  list.innerHTML = "<li>Loading…</li>";
+  if (!board) { list.innerHTML = '<li class="note">Leaderboards need a connection.</li>'; return; } // status lines are not numbered entries
+  list.innerHTML = '<li class="note">Loading…</li>';
   (score > 0 ? board.submit(score).catch(() => null) : Promise.resolve()).then(() => board.top(10)).then(({ entries }) => {
-    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score} pts</span></li>`).join("") : "<li>No scores yet. Be the first.</li>";
-  }).catch(() => { list.innerHTML = "<li>Couldn't load the leaderboard.</li>"; });
+    list.innerHTML = entries.length ? entries.map((e) => `<li>${esc(e.username || "Player")}<span>${e.score} pts</span></li>`).join("") : '<li class="note">No scores yet. Be the first.</li>';
+  }).catch(() => { list.innerHTML = '<li class="note">Couldn\'t load the leaderboard.</li>'; });
 }
 $("again").onclick = () => { const g = game(); if (!g || g.phase !== "results") return; if (isHost()) playAgain(g); else net.send("again", {}); $("over").hidden = true; };
 const playAgain = (g) => { if (g.phase === "results") writeGame({ ...g, endsAt: Math.min(g.endsAt, Date.now() + 1200) }); };
@@ -683,12 +684,14 @@ addEventListener("keydown", (e) => {
   if (e.key === " " || e.key === "Shift") { e.preventDefault(); shoveAt = performance.now(); }
 });
 addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+addEventListener("blur", () => { keys.clear(); Object.assign(stick, { id: -1, mx: 0, mz: 0 }); $("stick").hidden = true; }); // tabbed away: nothing stays held
 function readInput() {
   const k = (a, b) => (keys.has(a) || keys.has(b) ? 1 : 0);
   const mx = k("d", "arrowright") - k("a", "arrowleft") + stick.mx, mz = k("s", "arrowdown") - k("w", "arrowup") + stick.mz;
   return { mx, mz, shove: performance.now() - shoveAt < 150 };
 }
 const cv = renderer.domElement;
+cv.addEventListener("contextmenu", (e) => e.preventDefault());
 cv.addEventListener("pointerdown", (e) => {
   unlockAudio();
   if (e.pointerType === "mouse" || stick.id >= 0) return;
