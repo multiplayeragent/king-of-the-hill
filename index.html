@@ -415,7 +415,7 @@ function separate(b, others) {
 const spawnAt = (i, n) => { const a = Math.PI / 2 + (i / Math.max(1, n)) * Math.PI * 2; return { x: Math.cos(a) * 14, y: 0, z: Math.sin(a) * 14, h: Math.atan2(-Math.cos(a), -Math.sin(a)) }; };
 
 // ── GAME (HOST) ─────────────────────────────────────────────────────────────────────
-const host = { bots: new Map(), wasHost: false, last: null, id: -1, lastBots: 0, acc: new Map() }; // acc: id -> seconds alone on top not yet paid out
+const host = { bots: new Map(), wasHost: false, last: null, id: -1, lastBots: 0, acc: new Map(), shoveAt: new Map() }; // acc: id -> seconds alone on top not yet paid out; shoveAt: id -> when its last shove landed
 /** The game as state has it, or the host's own newer write that hasn't come back yet. `v` only goes up. */
 function game() { const g = shared("game", null); return host.last && isHost() && (!g || host.last.v > g.v) ? host.last : g; }
 function writeGame(g) { g = { ...g, v: (game()?.v ?? 0) + 1 }; host.last = g; net.setShared("game", JSON.stringify(g)); return g; }
@@ -487,12 +487,16 @@ function resolveShove(g, id, x, y, z, h) {
     net.send("knock", m); knockFx(m);
   }
 }
-/** A "shove" from another player: check it was where the host has it, then resolve it. */
+/** A "shove" from another player: check the game is on, its cooldown is over and it was where the host
+ *  has it (its height too), then resolve it. */
 function onShove(m, from) {
-  const g = game(); if (!g || g.phase !== "play") return;
-  const o = hostBodies(g).find((x) => x.id === from);
-  if (!o || Math.hypot(o.b.x - m.x, o.b.z - m.z) > 3.5 || !isFinite(m.h)) return;
-  resolveShove(g, from, +m.x, +m.y, +m.z, +m.h);
+  const g = game(); if (!g || g.phase !== "play" || Date.now() < g.startAt) return;
+  if (![m.x, m.z, m.h].every((v) => typeof v === "number" && isFinite(v))) return;
+  const o = hostBodies(g).find((x) => x.id === from), now = performance.now();
+  if (!o || Math.hypot(o.b.x - m.x, o.b.z - m.z) > 3.5) return;
+  if (now - (host.shoveAt.get(from) ?? -1e9) < CONFIG.shoveCooldown * 800) return; // faster than the cooldown allows (a little slack for lag)
+  host.shoveAt.set(from, now);
+  resolveShove(g, from, m.x, o.b.y, m.z, m.h);
 }
 /** Everyone on the snow, as the host sees it: its own buddy, the bots, and everyone else at their
  *  latest position moved on by their velocity. `local` ones the host moves itself. */
@@ -609,6 +613,11 @@ function publish(k) {
   const json = JSON.stringify({ k, x: r2(me.x), y: r2(me.y), z: r2(me.z), vx: r2(me.vx), vz: r2(me.vz), h: r2(me.h), a: me.a });
   if (json !== me.lastJson) { me.lastJson = json; net.me.set("p", json); } // standing still sends nothing
 }
+/** A "knock" message: only the host decides shoves, so one from anyone else (or with junk numbers) is ignored. */
+function onKnock(m, from) {
+  if (from !== livePlayers()[0] || ![m.vx, m.vy, m.vz, m.x, m.y, m.z].every((v) => typeof v === "number" && isFinite(v))) return;
+  knockFx(m);
+}
 /** A shove hit someone: puff and thump for everyone; if it's me, off I go. */
 function knockFx(m) {
   if (m.to === net.sessionId && !isHost()) knock(me, +m.vx, +m.vy, +m.vz);
@@ -648,7 +657,7 @@ function hud(g) {
 }
 function results(g, now, nm) {
   const mine = g.score[net.sessionId] || 0;
-  $("title").textContent = g.win === net.sessionId ? `You're the king! ${mine} points 👑` : g.win ? `${nm(g.win)} is the king! 👑` : "It's a tie!";
+  $("title").textContent = g.win === net.sessionId ? `You're the king! ${mine} points 👑` : g.win ? `${nm(g.win)} is the king! 👑` : Object.values(g.score).some((v) => v > 0) ? "It's a tie!" : "Nobody held the top!";
   const order = [...new Set([...g.roster.map((r) => r[0]), ...Object.keys(g.score)])].sort((a, b) => (g.score[b] || 0) - (g.score[a] || 0));
   $("results").innerHTML = order.slice(0, 10).map((id) => `<li class="${id === net.sessionId ? "me" : ""}">${esc(nm(id))}${id === g.win ? " 👑" : ""}<span>${g.score[id] || 0} pts</span></li>`).join("");
   $("next").textContent = `Next game in ${Math.max(0, Math.ceil((g.endsAt - now) / 1000))}s`;
@@ -780,7 +789,7 @@ function drawWorld(dt, g, now) {
   net = await connect();
   net.onState((st) => { S = st; });
   net.on("shove", (m, from) => { if (isHost() && m && typeof m === "object") onShove(m, from); });
-  net.on("knock", (m) => { if (m && typeof m === "object") knockFx(m); });
+  net.on("knock", (m, from) => { if (m && typeof m === "object") onKnock(m, from); });
   net.on("again", () => { const g = game(); if (isHost() && g) playAgain(g); });
   net.onDisconnect(() => { dropped = true; $("net").textContent = "Reconnecting…"; });
   net.onReconnect(() => { dropped = false; });
